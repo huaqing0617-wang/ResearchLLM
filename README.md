@@ -1,583 +1,276 @@
+<div align="center">
+
 # ResearchLLM
 
-> A local-first research knowledge infrastructure project for automatic indexing, traceable retrieval, and long-term scientific knowledge management.
+### Research knowledge, beyond document chat.
 
-ResearchLLM started from a simple question:
+**A local-first research knowledge infrastructure for continuously evolving scientific projects.**
 
-> **Can a research knowledge base stay continuously synchronized with real project folders instead of relying on manual document uploads?**
+*Automatic synchronization · Structure-aware parsing · Verifiable provenance · Reliable indexing*
 
-The project is evolving from a local RAG prototype into a research knowledge infrastructure layer that can monitor heterogeneous project assets, preserve provenance, recover from interruptions, and support increasingly structured scientific retrieval.
+[![Status](https://img.shields.io/badge/status-research_prototype-475569?style=flat-square)](#project-status)
+[![Sync](https://img.shields.io/badge/sync-v0.2.1_stable-18794e?style=flat-square)](#engineering-status)
+[![Parser](https://img.shields.io/badge/parser-v0.3.0_stable-18794e?style=flat-square)](#engineering-status)
+[![Tests](https://img.shields.io/badge/parser_tests-32_passed-18794e?style=flat-square)](#validation)
+[![Architecture](https://img.shields.io/badge/design-local--first-3b82f6?style=flat-square)](#architecture)
 
----
+**[Architecture](#architecture)** · **[Capabilities](#capabilities)** · **[Validation](#validation)** · **[Roadmap](#roadmap)** · **[Project status](#project-status)**
 
-## Overview
-
-Most RAG demos assume:
-
-```text
-Upload a few PDFs
-        ↓
-Create embeddings
-        ↓
-Ask questions
-```
-
-Real research projects are different. They contain papers, reports, source code, JSON/YAML, CSV/Excel, MATLAB, C/C++, Python, experiment logs, configuration files, presentations, notes, Git history, and simulation outputs.
-
-Those assets are continuously added, modified, renamed, and deleted.
-
-ResearchLLM is designed around this workflow:
-
-```text
-Research project folders
-        ↓
-Automatic change detection
-        ↓
-Parsing / normalization
-        ↓
-Embedding and indexing
-        ↓
-Consistency tracking
-        ↓
-Retrieval
-        ↓
-Local / optional cloud LLM
-        ↓
-Traceable research answers
-```
-
-The core design principle is:
-
-> **The research directory is the Source of Truth.**
-
-Indexes, vector databases, caches, and models should remain replaceable or rebuildable.
+</div>
 
 ---
 
-## Current Architecture
+## The idea
+
+Research doesn't live in a chat window. It lives in changing project directories: source code, experiment configurations, datasets, papers, reports, notebooks, and results.
+
+Traditional document-centric RAG starts with **upload → embed → ask**. ResearchLLM explores a different abstraction:
+
+> **Treat the research directory as the source of truth. Treat everything derived from it as replaceable infrastructure.**
+
+That means making changes discoverable, references traceable, and the knowledge index recoverable as projects evolve.
+
+```text
+                  RESEARCH FILES ARE THE SOURCE OF TRUTH
+                                     │
+                   Continuous synchronization + provenance
+                                     │
+                    Structure-aware research knowledge
+                                     │
+                       Grounded, traceable answers
+```
+
+## Architecture
+
+### 01 / System overview
+
+The current prototype combines a custom research synchronization layer with an [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm)-based retrieval environment and local model inference.
 
 ```mermaid
-flowchart TD
-    A[Research Files] --> B[ResearchLLM Sync]
-    B --> C{Change Detection}
-    C -->|ADD| D[Parse / Normalize]
-    C -->|MODIFY| D
-    C -->|RENAME| D
-    C -->|DELETE| E[Remove / Cleanup]
-    D --> F[AnythingLLM Collector]
-    F --> G[Embedding Model]
-    G --> H[LanceDB]
-    H --> I[ResearchDB]
-    I --> J[Local LLM]
-    I --> K[Future Cloud LLM Router]
-    B --> L[SQLite State DB]
-    B --> M[Operation Journal]
-    B --> N[Consistency Audit]
+flowchart TB
+    subgraph SOURCE["SOURCE OF TRUTH"]
+        D["Research project directories"]
+        P["Documents · source code · configurations"]
+        D --- P
+    end
+
+    subgraph CONTROL["RESEARCHLLM · CONTROL PLANE"]
+        S["Lifecycle-aware Sync"]
+        J["State · journal · recovery · audit"]
+        S <--> J
+    end
+
+    subgraph INGEST["RESEARCHLLM · INGESTION PLANE"]
+        R["Format routing"]
+        X["Structure-aware parsing"]
+        N["Source provenance"]
+        R --> X --> N
+    end
+
+    subgraph KNOWLEDGE["LOCAL KNOWLEDGE PLANE"]
+        A["AnythingLLM · document pipeline"]
+        E["Local embeddings"]
+        V[("LanceDB · vector index")]
+        A --> E --> V
+    end
+
+    subgraph QUERY["RESEARCH INTERFACE"]
+        Q["Natural-language question"]
+        L["Retrieval + local LLM"]
+        O["Answer with source evidence"]
+        Q --> L --> O
+    end
+
+    D --> S
+    S --> R
+    N --> A
+    V --> L
+
+    classDef source fill:#0f172a,stroke:#64748b,color:#ffffff
+    classDef control fill:#164e63,stroke:#0891b2,color:#ffffff
+    classDef knowledge fill:#14532d,stroke:#22c55e,color:#ffffff
+    class D,P source
+    class S,J,R,X,N control
+    class A,E,V,L knowledge
 ```
 
-Current stack:
+**Architectural boundary:** source files are durable research assets; indexes and embeddings are derived representations. The prototype is intentionally designed around that separation.
+
+### 02 / Document lifecycle
+
+A research file is not static. The indexing system needs to respond to its lifecycle rather than only its first upload.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Discovered
+    Discovered --> Indexed: ADD
+    Indexed --> Indexed: MODIFY / re-index
+    Indexed --> Indexed: RENAME / update provenance
+    Indexed --> Removed: DELETE
+    Removed --> [*]
+    Indexed --> Reconciliation: Interrupted operation
+    Reconciliation --> Indexed: Recover current source
+    Reconciliation --> Removed: Source no longer exists
+```
+
+The tested sync baseline includes modification and rename handling, an operation journal, recovery from a **simulated** interrupted transaction, consistency audits, and explicit cleanup of stale managed documents.
+
+### 03 / From bytes to evidence
+
+The first structure-aware parser release supports JSON key paths and Python source symbols. It is designed to keep the original location attached to the extracted content.
+
+```mermaid
+flowchart LR
+    F["Source file"] --> T{"Format"}
+    T -->|JSON| J["Structured values"]
+    T -->|Python| P["AST symbols"]
+    T -->|Other supported types| G["Existing ingestion path"]
+    J --> C["Content + locator"]
+    P --> C
+    G --> I["Indexed document"]
+    C --> I
+    I --> R["Retrieved evidence"]
+    R --> A["Grounded answer"]
+```
+
+For example, on **synthetic test data**:
 
 ```text
-AnythingLLM       → RAG interface, workspace, collector
-Ollama            → local model runtime
-Qwen3             → local generation models
-Qwen3 Embedding   → local embeddings
-LanceDB           → vector database
-SQLite            → synchronization state + operation journal
-ResearchLLM Sync  → custom lifecycle and synchronization layer
+Question  What is the configured maximum motor speed?
+Answer    20,480 RPM
+Source    Projects/Example/settings.json
+Locator   $.motor.max_rpm
 ```
+
+```text
+Question  Where is the conversion method defined?
+Symbol    ParserMotorController.pwm_to_rpm
+Source    Projects/Example/controller.py
+Lines     4–6
+```
+
+These examples illustrate verified JSON/Python locator behavior in controlled tests—not a claim of universal citation accuracy across all document types.
 
 ---
 
-## What Has Been Built
+## Capabilities
 
-### Local RAG Baseline
+| Layer | Implemented and tested | Scope |
+|:--|:--|:--|
+| **Local knowledge pipeline** | Local embedding, vector search, model-grounded Q&A | Research documents |
+| **Folder synchronization** | ADD · MODIFY · DELETE · RENAME | Watched research files |
+| **Integrity** | Content fingerprints, tracked state, consistency audit | Managed documents |
+| **Reliability** | Operation journal, single-worker protection, simulated crash recovery | Sync baseline |
+| **Lifecycle hygiene** | Orphan detection and explicit cleanup | Managed remote records |
+| **Structured parsing** | JSON paths and Python AST symbols / line ranges | JSON and Python |
+| **Provenance** | Source paths and format-specific locators | Validated synthetic cases |
+| **Daily workflow** | Automatic parser activation through the standard launcher | Local prototype |
 
-A fully local RAG pipeline is operational:
+### Format coverage is not the same as structural understanding
 
-```text
-Document
-↓
-AnythingLLM
-↓
-Local Embedding
-↓
-LanceDB
-↓
-Retriever
-↓
-Local LLM
-↓
-Answer
-```
+The existing ingestion pipeline accepts multiple text-like and common document formats. **Deep structural extraction has only been validated for JSON and Python.** MATLAB, C/C++, spreadsheets, PDFs, and other research assets do not yet have the same verified source-location guarantees.
 
-The pipeline has been validated using real research documents containing domain-specific parameters, numerical values, scenario labels, and version identifiers.
-
-### Automatic Research Folder Synchronization
-
-ResearchLLM Sync recursively monitors a designated research root and propagates file changes into the knowledge base.
-
-Current lifecycle support:
-
-```text
-ADD
-MODIFY
-DELETE
-RENAME
-```
-
-Typical workflow:
-
-```text
-Drop a file into the research folder
-        ↓
-ResearchLLM detects it
-        ↓
-Parse / normalize
-        ↓
-Upload and embed
-        ↓
-Knowledge base becomes queryable
-```
-
-No manual upload step is required.
-
-### Multi-Type Ingestion
-
-Native document formats currently delegated to the collector include:
-
-```text
-PDF
-DOCX
-XLSX
-PPTX
-TXT
-EPUB
-```
-
-Text-normalized inputs include:
-
-```text
-Markdown
-JSON / JSONL
-YAML
-CSV / TSV
-Python
-MATLAB
-C / C++
-JavaScript / TypeScript
-Java
-Go
-Rust
-Shell
-SQL
-LaTeX
-Logs
-Configuration files
-Jupyter notebooks
-```
-
-Normalized assets receive provenance metadata such as:
-
-```text
-source_path
-collection
-project
-original_filename
-original_extension
-sha256
-```
+This distinction is deliberate: an indexable file is not necessarily a structurally understood file.
 
 ---
 
-## ResearchLLM Sync v0.2.1
+## Validation
 
-The synchronization layer has moved beyond basic CRUD and now includes reliability mechanisms for long-running use.
+The project is developed through incremental testing rather than feature claims alone.
 
-### Rename Detection
-
-A rename can be identified when:
+**Parser v0.3.0 — controlled validation**
 
 ```text
-old path disappears
-+
-new path appears
-+
-SHA256 remains identical
+Offline automated tests              32 / 32  PASS
+JSON + Python structured ingestion           PASS
+Current-value retrieval after MODIFY          PASS
+Updated source paths after RENAME             PASS
+Index cleanup after DELETE                    PASS
+Automatic parsing via everyday launcher       PASS
+Final managed-document consistency audit      PASS
 ```
 
-ResearchLLM records it as:
+A separate sync baseline was tested for file lifecycle operations, orphan cleanup, and recovery after a deliberately simulated interrupted ADD transaction.
 
-```text
-RENAME
-old_path -> new_path
-```
-
-rather than treating it only as an unrelated delete/add pair.
-
-Because provenance metadata changes with the path, renamed files can be re-indexed to preserve correct source references.
-
-### Duplicate Detection
-
-Identical content does not automatically imply identical research meaning.
-
-```text
-Project-A/config.json
-Project-B/config.json
-```
-
-may have the same SHA256 but belong to different project contexts.
-
-ResearchLLM therefore detects duplicate content while preserving both logical source paths.
-
-### Operation Journal
-
-Mutating operations are journaled:
-
-```text
-pending
-↓
-remote operation
-↓
-local state update
-↓
-committed
-```
-
-This provides a basis for recovering from interrupted synchronization.
-
-### Crash Recovery
-
-Crash recovery has been tested with a deliberately simulated interrupted transaction.
-
-Observed sequence:
-
-```text
-unfinished operation detected
-↓
-rollback incomplete transaction
-↓
-rescan Source of Truth
-↓
-re-apply current file state
-↓
-upload / embed
-↓
-commit
-```
-
-The recovered file was subsequently retrievable with the correct source provenance.
-
-### Safer Modify Transactions
-
-The newer modify order is designed to reduce the chance of losing the last known-good indexed version:
-
-```text
-upload replacement
-↓
-confirm new remote location
-↓
-record transaction state
-↓
-remove stale version
-↓
-update local state
-↓
-commit
-```
-
-### Orphan Detection and Cleanup
-
-ResearchLLM can audit differences between:
-
-```text
-source files
-state database
-remote documents
-```
-
-and detect:
-
-```text
-untracked source
-missing source
-missing remote object
-orphan remote document
-duplicate groups
-```
-
-Permanent orphan deletion is intentionally explicit rather than automatic.
-
-### Single-Worker Safety
-
-Mutating modes use an exclusive process lock:
-
-```text
-continuous sync    → exclusive
-one-shot sync      → exclusive
-orphan cleanup     → exclusive
-
-status             → read-only
-audit              → read-only
-```
-
-Read-only inspection remains available while the background worker is active.
+**Known boundary:** a combined query once failed to retrieve the relevant JSON evidence while a focused JSON query succeeded. Multi-file recall and evidence coverage remain active areas of investigation. These tests are neither a large-scale benchmark nor a production reliability guarantee.
 
 ---
 
-## Verified Behavior
+## Engineering status
 
-| Capability | Status |
-|---|---|
-| Add file | PASS |
-| Modify file | PASS |
-| Delete file | PASS |
-| Rename file | PASS |
-| Duplicate detection | PASS |
-| Background synchronization | PASS |
-| Automatic embedding | PASS |
-| RAG retrieval | PASS |
-| Source provenance | PASS |
-| Persistent model configuration | PASS |
-| Operation journal | PASS |
-| Crash recovery | PASS |
-| Single-worker protection | PASS |
-| Status while worker is running | PASS |
-| Audit while worker is running | PASS |
-| Orphan detection | PASS |
-| Orphan cleanup | PASS |
-| Database schema migration | PASS |
-| Consistency audit | PASS |
+| Component | Baseline | State |
+|:--|:--|:--|
+| ResearchLLM Sync | **v0.2.1** | Stable *tested baseline* |
+| JSON / Python Structured Parser | **v0.3.0** | Stable *tested baseline* |
+| Structured MATLAB / C / C++ parsing | — | Planned |
+| Cross-format, multi-file retrieval improvements | — | Planned |
 
-Current stable synchronization baseline:
-
-```text
-ResearchLLM Sync v0.2.1
-STABLE BASELINE
-```
+> **Versioning note:** `Sync v0.2.1` and `Parser v0.3.0` are separate component versions. This is not a claim that every ResearchLLM subsystem is at v0.3.0.
 
 ---
 
-## Engineering Principles
+## Design principles
 
-### Source files are durable; infrastructure is rebuildable
+**01 · Source-of-truth architecture**  
+Keep primary research assets independent of models and indexes.
 
-```text
-Research files    = durable
-Vector database   = rebuildable
-Embedding index   = rebuildable
-Cache             = rebuildable
-Model             = replaceable
-```
+**02 · Provenance over plausible answers**  
+A useful scientific answer identifies supporting evidence, not only a conclusion.
 
-### Provenance is part of the answer
+**03 · Lifecycle awareness**  
+Updated and removed source files must not silently coexist with obsolete knowledge.
 
-The target is not only to answer *what*, but also *where*:
+**04 · Failure-aware engineering**  
+Auditability and recovery are part of the design, not afterthoughts.
 
-```text
-file path
-page number
-slide number
-sheet
-cell range
-JSON path
-function
-class
-symbol
-line range
-Git commit
-```
-
-### Current evidence should outrank stale chat history
-
-A useful failure mode observed during development was that an updated database value could conflict with an older answer retained in conversation history.
-
-Future retrieval policy should make current indexed evidence authoritative for questions such as:
-
-```text
-current
-latest
-now
-```
-
-### Reliability before convenience
-
-Lower synchronization latency is useful, but crash recovery, consistency, provenance, and lifecycle management are higher priorities.
-
----
-
-## Current Limitations
-
-ResearchLLM is still under active development.
-
-```text
-Source code
-→ indexable, but not yet fully symbol-aware
-
-JSON / YAML
-→ searchable, but not yet first-class JSONPath provenance
-
-Excel
-→ ingestible, but not yet exact sheet/cell provenance
-
-PowerPoint
-→ ingestible, but not yet slide-level provenance
-
-PDF
-→ ingestible, but fine-grained page/section provenance is still evolving
-
-Engineering/simulation project formats
-→ not yet covered by dedicated parsers
-```
+**05 · Composable components**  
+Ingestion, indexing, and generation should have clean boundaries.
 
 ---
 
 ## Roadmap
 
-### Milestone 0 — Local RAG Baseline
-
-```text
-Status: COMPLETE
+```mermaid
+flowchart LR
+    M0["M0 · Local RAG\nComplete"] --> M1["M1 · Automatic Sync\nComplete"]
+    M1 --> M2["M2 · Structured Parsing\nJSON / Python complete"]
+    M2 --> M3["Next · Scientific Code\nMATLAB / C / C++"]
+    M3 --> M4["Later · Rich Evidence\nCross-file retrieval"]
 ```
 
-### Milestone 1 — Automatic Research Database Sync
-
-```text
-Status: COMPLETE
-```
-
-Implemented:
-
-```text
-ADD / MODIFY / DELETE / RENAME
-duplicate tracking
-operation journal
-crash recovery
-orphan cleanup
-consistency audit
-automatic embedding
-background synchronization
-```
-
-### Milestone 2 — Multi-Format Research Parsing
-
-```text
-Status: NEXT
-```
-
-Planned structured provenance:
-
-```text
-Python / C / C++ / MATLAB
-→ function / class / symbol / line range
-
-JSON / YAML
-→ key path / JSONPath
-
-CSV
-→ schema / row range
-
-XLSX
-→ workbook / sheet / cell range
-
-PPTX
-→ slide number / title
-
-PDF
-→ page / section
-
-Jupyter
-→ cell number / cell type
-```
-
-### Milestone 3 — Hybrid Retrieval
-
-```text
-Vector Search
-+
-Keyword / BM25
-+
-Code Symbol Search
-+
-Metadata Filters
-+
-Reranking
-```
-
-### Milestone 4 — Research Accuracy Mode
-
-```text
-numeric comparison checks
-unit consistency
-figure / table reference validation
-source verification
-version conflict detection
-fact vs inference separation
-```
-
-### Milestone 5 — Model Routing
-
-```text
-simple query
-→ small local model
-
-complex research reasoning
-→ larger local model
-
-high-complexity cross-document analysis
-→ optional cloud model
-
-sensitive project
-→ local-only policy
-```
-
-### Milestone 6 — Multi-User Research Infrastructure
-
-```text
-multi-user access
-permissions
-project isolation
-audit logs
-private deployment
-shared research knowledge
-historical project preservation
-```
+The next public technical priorities are richer scientific-code parsing and improved retrieval across multiple files. Broader functionality will be announced only after validation.
 
 ---
 
-## Why This Project Exists
+## Technology
 
-Research groups accumulate large amounts of technical knowledge across:
+| Area | Foundation |
+|:--|:--|
+| Knowledge workspace and document pipeline | [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm) |
+| Local model runtime | [Ollama](https://ollama.com/) |
+| Local language and embedding models | Qwen family |
+| Vector index | LanceDB |
+| Sync state and operation tracking | SQLite |
+| Structural extraction | Python AST / JSON parsing |
 
-```text
-project folders
-code repositories
-experiment logs
-presentations
-reports
-papers
-personal notes
-```
-
-When a project ends or a researcher leaves, the files may remain while the reasoning behind them becomes difficult to recover.
-
-ResearchLLM explores a different possibility:
-
-> **Models can change. People can graduate. Projects can end. The research knowledge itself should remain searchable, traceable, and reusable.**
+ResearchLLM builds on existing open-source foundations. Their respective trademarks and licenses remain with their owners.
 
 ---
 
-## Development Status
+## Project status
 
-```text
-Local RAG                            COMPLETE
-Automatic research synchronization  COMPLETE
-Sync reliability baseline           STABLE
+**Research prototype · Updated 2026-10-09**
 
-Next:
-Structured research parsing
-```
+This repository is a **public technical showcase** for the ResearchLLM project. It documents high-level architecture, engineering decisions, validated functionality, and development progress. It is **not currently an installable public source release**; internal source, research materials, test datasets, and deployment-specific configuration are not distributed here.
 
-ResearchLLM is currently an experimental engineering project under active development.
+The published tests establish a controlled development baseline, not a claim of commercial readiness, comprehensive format support, or audited security.
 
-This public repository intentionally contains only architecture, engineering decisions, testing methodology, and public development progress. Private research data, credentials, internal project materials, deployment-specific paths, and secrets are excluded.
+<div align="center">
+
+---
+
+**Research files are the source of truth. Everything derived from them should be accountable.**
+
+*ResearchLLM · Built for evolving research.*
+
+</div>
